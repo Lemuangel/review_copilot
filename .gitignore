@@ -1,0 +1,24 @@
+# 环境变量（包含密码、密钥）
+.env
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Node
+node_modules/
+dist/
+
+# IDE
+.vscode/
+.idea/
+
+# 数据文件（大文件不入库）
+data/raw/*.json
+*.log
+
+# 系统文件
+.DS_Store
+Thumbs.db
