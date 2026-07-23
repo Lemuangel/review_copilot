@@ -12,13 +12,17 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Dict, Optional, List, TYPE_CHECKING
+import hashlib
+import time
+from functools import lru_cache
+from typing import Dict, Optional, List, Tuple, TYPE_CHECKING
 
 from app.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from app.prompts import (
     build_translation_prompt,
     build_reply_prompt,
     format_rag_context,
+    sanitize_analysis_input,
 )
 from app.vector_store import get_vector_store
 
@@ -30,15 +34,53 @@ if TYPE_CHECKING:
 # ============================================================
 # 1. LLM 初始化
 # ============================================================
-def init_llm(temperature: float = 0.3):
-    """初始化 DeepSeek LLM"""
+def init_llm(temperature: float = 0.3, streaming: bool = False):
+    """初始化 DeepSeek LLM
+    
+    Args:
+        temperature: 温度参数
+        streaming: 是否启用流式输出（降低首字延迟）
+    """
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(
         model=DEEPSEEK_MODEL,
         openai_api_key=DEEPSEEK_API_KEY,
         base_url=DEEPSEEK_BASE_URL,
         temperature=temperature,
+        streaming=streaming,
     )
+
+
+# ============================================================
+# 1.5 分析结果缓存（LRU，减少重复API调用）
+# ============================================================
+_ANALYSIS_CACHE: Dict[str, Tuple[float, Dict]] = {}
+_CACHE_MAX_SIZE = 200
+_CACHE_TTL = 3600  # 1小时
+
+
+def _cache_key(review_text: str) -> str:
+    """生成缓存键"""
+    return hashlib.md5(review_text.encode()).hexdigest()
+
+
+def _get_cached(key: str) -> Optional[Dict]:
+    """获取缓存结果"""
+    if key in _ANALYSIS_CACHE:
+        ts, result = _ANALYSIS_CACHE[key]
+        if time.time() - ts < _CACHE_TTL:
+            return result
+        del _ANALYSIS_CACHE[key]
+    return None
+
+
+def _set_cache(key: str, result: Dict):
+    """设置缓存"""
+    if len(_ANALYSIS_CACHE) >= _CACHE_MAX_SIZE:
+        # 移除最旧的条目
+        oldest = min(_ANALYSIS_CACHE.items(), key=lambda x: x[1][0])
+        del _ANALYSIS_CACHE[oldest[0]]
+    _ANALYSIS_CACHE[key] = (time.time(), result)
 
 
 # ============================================================
@@ -215,6 +257,7 @@ def analyze_review(
     review_data: Dict,
     llm=None,
     use_rag: bool = True,
+    use_cache: bool = True,
 ) -> Dict:
     """
     完整的差评分析链路：
@@ -224,15 +267,29 @@ def analyze_review(
         review_data: 包含 asin, reviewText, overall, summary, style, category, country 等字段
         llm: LLM 实例
         use_rag: 是否使用 RAG 检索
+        use_cache: 是否使用分析缓存（默认开启）
 
     Returns:
         完整分析结果
     """
+    original_text = review_data.get("reviewText", "")
+
+    # Step 0: 输入清洗与边界情况检测
+    cleaned_data, warnings = sanitize_analysis_input(review_data)
+    original_text = cleaned_data["reviewText"]
+
+    # Step 0.5: 检查缓存
+    cache_key = _cache_key(original_text)
+    if use_cache:
+        cached = _get_cached(cache_key)
+        if cached:
+            cached["_from_cache"] = True
+            return cached
+
     if not llm:
-        llm = init_llm(temperature=0.3)
+        llm = init_llm(temperature=0.3, streaming=True)
 
     # Step 1: 翻译（如需要）
-    original_text = review_data.get("reviewText", "")
     translated_text = translate_to_english(original_text, llm)
 
     # Step 2: 8维分析
@@ -297,5 +354,13 @@ def analyze_review(
         except Exception as e:
             result["similar_cases"] = []
             result["rag_error"] = str(e)
+
+    # 写入缓存
+    if use_cache:
+        _set_cache(cache_key, result)
+
+    # 附上输入清洗警告
+    if warnings:
+        result["input_warnings"] = warnings
 
     return result

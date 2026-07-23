@@ -35,12 +35,12 @@ class AmazonReviewLoader:
         """
         self.data_dir = data_dir
 
-    def load_reviews(self, max_reviews: int = 500) -> List[Dict]:
+    def load_reviews(self, max_reviews: int = None) -> List[Dict]:
         """
         加载评论数据，返回原始 dict 列表
 
         Args:
-            max_reviews: 最大加载条数，默认500
+            max_reviews: 最大加载条数，默认None(全部加载)
         """
         reviews = []
         files = self._find_data_files()
@@ -54,7 +54,7 @@ class AmazonReviewLoader:
             try:
                 with gzip.open(filepath, 'rt', encoding='utf-8') as f:
                     for line in f:
-                        if len(reviews) >= max_reviews:
+                        if max_reviews and len(reviews) >= max_reviews:
                             break
                         try:
                             review = json.loads(line.strip())
@@ -65,7 +65,7 @@ class AmazonReviewLoader:
                 # 尝试作为普通 JSON 读取
                 with open(filepath, 'r', encoding='utf-8') as f:
                     for line in f:
-                        if len(reviews) >= max_reviews:
+                        if max_reviews and len(reviews) >= max_reviews:
                             break
                         try:
                             review = json.loads(line.strip())
@@ -73,7 +73,7 @@ class AmazonReviewLoader:
                         except json.JSONDecodeError:
                             continue
 
-            if len(reviews) >= max_reviews:
+            if max_reviews and len(reviews) >= max_reviews:
                 break
 
         print(f"[INFO] 加载了 {len(reviews)} 条评论")

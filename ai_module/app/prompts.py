@@ -177,3 +177,140 @@ def build_reply_prompt():
         ("system", REPLY_GENERATION_SYSTEM),
         ("human", REPLY_GENERATION_HUMAN),
     ])
+
+
+# ============================================================
+# 6. 输入预处理与边界情况处理
+# ============================================================
+import re
+
+MAX_REVIEW_LENGTH = 2000  # 最大评论长度（字符）
+MIN_REVIEW_LENGTH = 3     # 最小评论长度
+
+
+def preprocess_review_text(text: str) -> tuple:
+    """
+    预处理评论文本，处理边界情况
+
+    Args:
+        text: 原始评论文本
+
+    Returns:
+        (processed_text, warnings): 处理后的文本和警告列表
+    """
+    warnings = []
+    
+    if not text or not text.strip():
+        return "", ["EMPTY_INPUT: 评论内容为空"]
+    
+    original_len = len(text)
+    processed = text.strip()
+    
+    # 1. 纯符号/纯数字检测
+    alpha_chars = sum(1 for c in processed if c.isalpha())
+    alpha_ratio = alpha_chars / max(len(processed), 1)
+    
+    if alpha_ratio < 0.1:
+        warnings.append("NON_TEXT: 评论内容几乎不包含文字")
+        if len(processed) < MIN_REVIEW_LENGTH:
+            return processed, warnings
+    
+    # 2. 纯重复字符检测
+    unique_chars = len(set(processed))
+    if unique_chars <= 2 and len(processed) > 10:
+        warnings.append("REPETITIVE: 评论内容为重复字符")
+    
+    # 3. 超长评论文本截断
+    if len(processed) > MAX_REVIEW_LENGTH:
+        # 智能截断：在句子边界处截断
+        cut_point = MAX_REVIEW_LENGTH
+        for sep in ['. ', '。', '! ', '！', '? ', '？', '\n']:
+            last_sep = processed.rfind(sep, 0, MAX_REVIEW_LENGTH)
+            if last_sep > MAX_REVIEW_LENGTH * 0.7:  # 至少保留 70%
+                cut_point = last_sep + len(sep)
+                break
+        processed = processed[:cut_point] + "..."
+        warnings.append(f"TRUNCATED: 评论过长({original_len}字符)，已截断至{len(processed)}字符")
+    
+    # 4. 控制字符和零宽字符清理
+    processed = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f]', '', processed)
+    processed = re.sub(r'[\u200b-\u200f\u2028-\u202f\ufeff]', '', processed)
+    
+    # 5. 表情符号保留（不处理）但检测过多情况
+    emoji_pattern = re.compile(
+        r'[\U0001F600-\U0001F64F\U0001F300-\U0001F5FF'
+        r'\U0001F680-\U0001F6FF\U0001F1E0-\U0001F1FF'
+        r'\u2600-\u26FF\u2700-\u27BF]',
+        flags=re.UNICODE
+    )
+    emoji_count = len(emoji_pattern.findall(processed))
+    if emoji_count > 20:
+        warnings.append(f"EMOJI_HEAVY: 评论包含{emoji_count}个表情符号")
+    
+    # 6. 过短评论
+    if len(processed) < MIN_REVIEW_LENGTH:
+        warnings.append("TOO_SHORT: 评论内容过短，分析结果可能不准确")
+    
+    return processed, warnings
+
+
+def sanitize_analysis_input(review_data: dict) -> dict:
+    """
+    清洗分析输入数据，处理边界情况
+
+    Args:
+        review_data: 原始差评数据
+
+    Returns:
+        (sanitized_data, warnings): 清洗后的数据和警告
+    """
+    all_warnings = []
+    sanitized = {}
+    
+    # 清洗文本
+    text = review_data.get("reviewText", "")
+    processed_text, text_warnings = preprocess_review_text(text)
+    all_warnings.extend(text_warnings)
+    sanitized["reviewText"] = processed_text
+    
+    # 清洗 ASIN
+    asin = str(review_data.get("asin", "")).strip()
+    if not asin or asin.lower() in ("unknown", "", "none", "null"):
+        asin = "unknown"
+    sanitized["asin"] = asin
+    
+    # 清洗类目
+    category = str(review_data.get("category", "")).strip()
+    if not category or category.lower() in ("unknown", "", "none", "null"):
+        category = "unknown"
+    sanitized["category"] = category
+    
+    # 清洗评分
+    try:
+        overall = float(review_data.get("overall", 0))
+        if overall < 1.0:
+            overall = 1.0
+        elif overall > 5.0:
+            overall = 5.0
+    except (ValueError, TypeError):
+        overall = 1.0
+        all_warnings.append("INVALID_RATING: 评分无效，默认1.0")
+    sanitized["overall"] = overall
+    
+    # 清洗摘要
+    summary = str(review_data.get("summary", "")).strip()
+    sanitized["summary"] = summary[:200] if summary else ""
+    
+    # 清洗国家
+    country = str(review_data.get("country", "")).strip()
+    if not country or len(country) > 4:
+        country = "unknown"
+    sanitized["country"] = country[:2].upper()
+    
+    # 清洗变体
+    style = review_data.get("style", {})
+    if not isinstance(style, dict):
+        style = {}
+    sanitized["style"] = style
+    
+    return sanitized, all_warnings
