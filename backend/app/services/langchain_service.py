@@ -1,10 +1,8 @@
 """
-LangChain 服务 — LCEL Chain + 输出解析器
+⚠️ 已废弃 — AI 调用已迁移至同学的 ai_module（analyze_review + generate_reply）
 
-Prompt 模板统一由 prompt_service.py 管理，本文件负责：
-1. LCEL (|) 链式调用
-2. 自定义 JSON 输出解析器
-3. LLMChain 兼容模式（教学保留）
+LangChain 服务 — LCEL Chain + 输出解析器
+保留作为教学参考。
 """
 
 import json

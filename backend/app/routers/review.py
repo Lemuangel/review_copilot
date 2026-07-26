@@ -7,18 +7,12 @@ GET  /reviews/{id}/context — 全链路上下文
 GET  /reviews/wordcloud    — 词云数据
 """
 
-import os
-import json
 import re
-import sys
-from pathlib import Path
 from collections import Counter
 
-import openai
 import jieba
 from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Depends
 from sqlalchemy.orm import Session
-from pydantic import BaseModel
 
 from app.database.database import get_db
 from app.models import Review
@@ -27,7 +21,6 @@ from app.services.review_service import (
     parse_csv, process_reviews,
     get_review_context, get_review_list, get_review_detail,
 )
-from app.services.prompt_service import customer_reply_prompt, operation_suggestion_prompt
 
 router = APIRouter(prefix="/reviews", tags=["评论管理"])
 
