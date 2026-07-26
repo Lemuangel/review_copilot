@@ -37,6 +37,10 @@ class Settings:
     MODEL_BASE_URL: str = os.getenv("MODEL_BASE_URL", "https://api.deepseek.com/v1")
     MODEL_NAME: str = os.getenv("MODEL_NAME", "deepseek-chat")
 
+    DEEPSEEK_API_KEY: str = os.getenv("OPENAI_API_KEY", "") or os.getenv("MODEL_API_KEY", "")
+    DEEPSEEK_BASE_URL: str = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+    DEEPSEEK_MODEL: str = os.getenv("OPENAI_MODEL_NAME", "deepseek-v4-pro")
+
     # MySQL 配置
     MYSQL_HOST: str = os.getenv("MYSQL_HOST", "localhost")
     MYSQL_PORT: str = os.getenv("MYSQL_PORT", "3306")

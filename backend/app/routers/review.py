@@ -1,12 +1,33 @@
 """
 评论上传接口
 POST /reviews/upload — 上传CSV评论文件 → 保存 review 表
+GET  /reviews        — 评论列表（分页）
+GET  /reviews/{id}   — 评论详情
+GET  /reviews/{id}/context — 全链路上下文
+GET  /reviews/wordcloud    — 词云数据
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException, Query
+import os
+import json
+import re
+import sys
+from pathlib import Path
+from collections import Counter
 
+import openai
+import jieba
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query, Depends
+from sqlalchemy.orm import Session
+from pydantic import BaseModel
+
+from app.database.database import get_db
+from app.models import Review
 from app.schemas import ReviewUploadResponse, ReviewContextResponse, ReviewListItem
-from app.services.review_service import parse_csv, process_reviews, get_review_context, get_review_list, get_review_detail
+from app.services.review_service import (
+    parse_csv, process_reviews,
+    get_review_context, get_review_list, get_review_detail,
+)
+from app.services.prompt_service import customer_reply_prompt, operation_suggestion_prompt
 
 router = APIRouter(prefix="/reviews", tags=["评论管理"])
 
@@ -61,6 +82,10 @@ async def upload_reviews(file: UploadFile = File(..., description="CSV评论文�
     )
 
 
+# ============================================================
+# 评论上下文查询（任务3）
+# ============================================================
+
 @router.get("/{review_id}/context", response_model=ReviewContextResponse, summary="查询评论全链路上下文")
 async def get_context(review_id: int):
     """
@@ -84,6 +109,10 @@ async def get_context(review_id: int):
 
     return ReviewContextResponse(**context)
 
+
+# ============================================================
+# 前端接口：列表 + 详情
+# ============================================================
 
 @router.get("", response_model=dict, summary="评论列表（分页）")
 async def list_reviews(
@@ -118,3 +147,50 @@ async def get_review(review_id: int):
         raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
 
     return {"code": 200, "data": detail}
+
+
+# ============================================================
+# 词云接口
+# ============================================================
+
+@router.get("/wordcloud", summary="词云数据")
+async def get_wordcloud(db: Session = Depends(get_db)):
+    """生成词云数据：从所有差评中提取高频词"""
+    reviews = db.query(Review).all()
+    if not reviews:
+        return {"code": 200, "data": []}
+
+    # 拼接所有评论文本
+    all_text = " ".join([r.review_text for r in reviews if r.review_text])
+
+    # 分词
+    words = []
+    # 英文分词
+    english_words = re.findall(r'\b[a-zA-Z]{3,}\b', all_text)
+    words.extend([w.lower() for w in english_words])
+
+    # 中文分词
+    chinese_words = jieba.lcut(all_text)
+    words.extend([w for w in chinese_words if len(w) > 1])
+
+    # 停用词
+    stopwords = {
+        'a', 'an', 'the', 'and', 'or', 'but', 'for', 'nor', 'on', 'at', 'to', 'by',
+        'in', 'of', 'off', 'out', 'over', 'under', 'with', 'without', 'after',
+        'before', 'during', 'through', 'between', 'among', 'upon', 'about',
+        'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'us', 'them',
+        'my', 'your', 'his', 'her', 'our', 'their', 'is', 'are', 'was', 'were',
+        'be', 'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did',
+        'will', 'would', 'could', 'should', 'may', 'might', 'must', 'shall',
+        'this', 'that', 'these', 'those', 'then', 'now', 'not', 'so', 'too',
+        'very', 'just', 'only', 'also', 'again', 'ever', 'never', 'all',
+        '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一',
+        '一个', '上', '也', '很', '到', '说', '要', '去', '你', '会', '着',
+        '没有', '看', '好', '自己', '这', '他', '她', '它', '们',
+    }
+
+    filtered = [w for w in words if w.lower() not in stopwords]
+    counter = Counter(filtered)
+    result = [{"name": word, "value": count} for word, count in counter.most_common(100)]
+
+    return {"code": 200, "data": result}

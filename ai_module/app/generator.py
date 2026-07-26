@@ -16,21 +16,27 @@ import hashlib
 import time
 from functools import lru_cache
 from typing import Dict, Optional, List, Tuple, TYPE_CHECKING
+import os
 
-from app.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
-from app.prompts import (
+DEEPSEEK_API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("MODEL_API_KEY")
+DEEPSEEK_BASE_URL = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL = os.getenv("OPENAI_MODEL_NAME", "deepseek-v4-pro")
+
+from .prompts import (
     build_translation_prompt,
     build_reply_prompt,
     format_rag_context,
     sanitize_analysis_input,
 )
-from app.vector_store import get_vector_store
+from .vector_store import get_vector_store
 
 if TYPE_CHECKING:
     from langchain_core.output_parsers import JsonOutputParser
     from langchain_core.runnables import RunnableSerializable
 
-
+print("🔍 环境变量检查:")
+print("OPENAI_API_KEY:", os.getenv("OPENAI_API_KEY", "未设置"))
+print("OPENAI_BASE_URL:", os.getenv("OPENAI_BASE_URL", "未设置"))
 # ============================================================
 # 1. LLM 初始化
 # ============================================================
@@ -293,7 +299,7 @@ def analyze_review(
     translated_text = translate_to_english(original_text, llm)
 
     # Step 2: 8维分析
-    from app.prompts import build_analysis_prompt
+    from .prompts import build_analysis_prompt
     analysis_prompt = build_analysis_prompt()
 
     # 构建分析输入

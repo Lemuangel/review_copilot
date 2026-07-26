@@ -8,7 +8,7 @@ __pycache__/
 venv/
 
 # Environment (contains API keys)
-.env
+backend/.env
 
 # Database
 *.db

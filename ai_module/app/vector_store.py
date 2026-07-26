@@ -14,7 +14,7 @@ import json
 from typing import List, Optional, Tuple, TYPE_CHECKING
 from langchain_core.documents import Document
 
-from app.config import VECTOR_DB_PATH, EMBEDDING_MODEL, RAG_TOP_K, RAG_SIMILARITY_THRESHOLD
+from .config import VECTOR_DB_PATH, EMBEDDING_MODEL, RAG_TOP_K, RAG_SIMILARITY_THRESHOLD
 
 if TYPE_CHECKING:
     from langchain_huggingface import HuggingFaceEmbeddings
