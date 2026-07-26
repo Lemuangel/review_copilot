@@ -10,7 +10,7 @@ from langchain_core.prompts import PromptTemplate
 # ============================================================
 
 review_analysis_prompt = PromptTemplate(
-    input_variables=["review_text"],
+    input_variables=["review_text", "context_text"],
     template="""你是一位资深的跨境电商运营专家。请分析以下用户差评，识别出产品存在的问题。
 
 ## 分析维度
@@ -24,10 +24,14 @@ review_analysis_prompt = PromptTemplate(
 - 售后问题：客服态度差、退换货困难、响应慢
 - 价格问题：价格偏高、性价比低
 
+{context_text}
+
 ## 输出格式
-请以纯JSON格式返回结果，不要包含任何markdown代码块标记：
+请基于评论内容和业务上下文，给出有根有据的分析。以纯JSON格式返回，不要包含任何markdown代码块标记：
 {{
     "issues": ["问题1", "问题2"],
+    "root_cause": "根本原因的简要分析",
+    "evidence": ["从上下文中找到的具体证据，如delay_days=7"],
     "sentiment": "negative",
     "severity": "high|medium|low"
 }}
@@ -44,17 +48,20 @@ review_analysis_prompt = PromptTemplate(
 # ============================================================
 
 operation_suggestion_prompt = PromptTemplate(
-    input_variables=["review_text", "issues"],
-    template="""你是一位资深的跨境电商运营顾问。基于差评分析结果，请给出具体可落地的运营优化建议。
+    input_variables=["review_text", "issues", "context_text"],
+    template="""你是一位资深的跨境电商运营顾问。基于差评分析结果和业务上下文，请给出具体可落地的运营优化建议。
 
 ## 已知问题
 {issues}
+
+{context_text}
 
 ## 原始评论
 {review_text}
 
 ## 要求
 - 每条建议要具体、可执行
+- 结合业务上下文（物流数据、仓储数据、库存数据）给出针对性建议
 - 区分短期可解决的（1-2周）和长期改进的（1-3个月）
 - 考虑成本和实施难度
 

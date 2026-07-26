@@ -1,15 +1,10 @@
 """
-LangChain 服务 — PromptTemplate + LCEL Chain + 输出解析器
+LangChain 服务 — LCEL Chain + 输出解析器
 
-本文件作为 LangChain 的独立封装层，展示：
-1. PromptTemplate 定义与复用
-2. LCEL (|) 链式调用
-3. 自定义输出解析器
-4. LLMChain 兼容模式（教学保留）
-
-与 ai_service.py 的区别：
-    - ai_service.py: 实际业务调用的轻量封装
-    - langchain_service.py: LangChain 完整能力展示层
+Prompt 模板统一由 prompt_service.py 管理，本文件负责：
+1. LCEL (|) 链式调用
+2. 自定义 JSON 输出解析器
+3. LLMChain 兼容模式（教学保留）
 """
 
 import json
@@ -18,9 +13,8 @@ import logging
 from typing import Any
 
 from langchain_openai import ChatOpenAI
-from langchain_core.prompts import PromptTemplate, ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, SystemMessagePromptTemplate, HumanMessagePromptTemplate
 from langchain_core.output_parsers import StrOutputParser, BaseOutputParser
-from langchain_core.runnables import RunnablePassthrough
 
 from app.config import settings
 
@@ -88,74 +82,16 @@ class JsonOutputParser(BaseOutputParser[dict]):
 
 
 # =========================================================================
-# PromptTemplate 定义
+# PromptTemplate — 统一从 prompt_service.py 引用，避免重复定义
 # =========================================================================
 
-REVIEW_ANALYSIS_TEMPLATE = PromptTemplate(
-    input_variables=["review_text"],
-    template="""你是一位资深的跨境电商运营专家。请分析以下用户差评，识别出产品存在的问题。
-
-## 分析维度
-- 产品质量、包装问题、物流问题、尺寸问题、色差问题、功能问题、售后问题、价格问题
-
-## 输出格式（纯JSON，无markdown标记）
-{{
-    "issues": ["问题1", "问题2"],
-    "sentiment": "negative",
-    "severity": "high|medium|low"
-}}
-
-## 用户评论
-{review_text}
-
-请分析：""",
+from app.services.prompt_service import (
+    review_analysis_prompt,
+    operation_suggestion_prompt,
+    customer_reply_prompt,
 )
 
-CUSTOMER_REPLY_TEMPLATE = PromptTemplate(
-    input_variables=["review_text", "language"],
-    template="""你是一位专业的跨境电商客服代表。请撰写专业、真诚的客服回复。
-
-## 要求
-- 先致歉和理解
-- 给出具体解决方案
-- 150字以内
-- 使用{language}
-
-## 差评
-{review_text}
-
-## 输出（纯JSON，无markdown标记）
-{{
-    "reply": "回复文本"
-}}""",
-)
-
-OPERATION_SUGGESTION_TEMPLATE = PromptTemplate(
-    input_variables=["review_text", "issues"],
-    template="""你是一位资深的跨境电商运营顾问。基于差评分析结果，请给出具体可落地的运营优化建议。
-
-## 已知问题
-{issues}
-
-## 原始评论
-{review_text}
-
-## 要求
-- 每条建议要具体、可执行
-- 区分短期可解决的（1-2周）和长期改进的（1-3个月）
-- 考虑成本和实施难度
-
-## 输出（纯JSON，无markdown标记）
-{{
-    "suggestions": ["建议1", "建议2"],
-    "priority": ["高", "中"],
-    "estimated_impact": "高|中|低"
-}}
-
-请给出建议：""",
-)
-
-# ChatPromptTemplate 版本（System + Human 消息分离）
+# ChatPromptTemplate 版本（System + Human 消息分离，教学保留）
 REVIEW_ANALYSIS_CHAT_PROMPT = ChatPromptTemplate.from_messages([
     SystemMessagePromptTemplate.from_template(
         "你是一位资深的跨境电商运营专家，擅长分析用户差评。"
@@ -172,14 +108,10 @@ REVIEW_ANALYSIS_CHAT_PROMPT = ChatPromptTemplate.from_messages([
 # =========================================================================
 
 def create_review_analysis_chain():
-    """
-    创建差评分析 LCEL 链。
-
-    Chain: PromptTemplate | ChatOpenAI | StrOutputParser | JsonOutputParser
-    """
+    """差评分析 LCEL 链。Prompt 引用 prompt_service.review_analysis_prompt"""
     llm = get_langchain_llm()
     return (
-        REVIEW_ANALYSIS_TEMPLATE
+        review_analysis_prompt
         | llm
         | StrOutputParser()
         | JsonOutputParser()
@@ -187,14 +119,10 @@ def create_review_analysis_chain():
 
 
 def create_customer_reply_chain():
-    """
-    创建客服回复 LCEL 链。
-
-    Chain: PromptTemplate | ChatOpenAI | StrOutputParser | JsonOutputParser
-    """
+    """客服回复 LCEL 链。Prompt 引用 prompt_service.customer_reply_prompt"""
     llm = get_langchain_llm()
     return (
-        CUSTOMER_REPLY_TEMPLATE
+        customer_reply_prompt
         | llm
         | StrOutputParser()
         | JsonOutputParser()
@@ -202,14 +130,10 @@ def create_customer_reply_chain():
 
 
 def create_suggestion_chain():
-    """
-    创建运营建议 LCEL 链。
-
-    Chain: PromptTemplate | ChatOpenAI | StrOutputParser | JsonOutputParser
-    """
+    """运营建议 LCEL 链。Prompt 引用 prompt_service.operation_suggestion_prompt"""
     llm = get_langchain_llm()
     return (
-        OPERATION_SUGGESTION_TEMPLATE
+        operation_suggestion_prompt
         | llm
         | StrOutputParser()
         | JsonOutputParser()
@@ -235,15 +159,20 @@ def create_chat_analysis_chain():
 # 便捷调用函数
 # =========================================================================
 
-def analyze_with_lcel(review_text: str) -> dict:
+def analyze_with_lcel(review_text: str, context_text: str = "") -> dict:
     """
     使用 LCEL 链分析差评。
 
+    参数:
+        review_text:  差评原文
+        context_text: 业务上下文（订单+物流+仓储+库存），可选
+
     返回:
-        {"issues": [...], "sentiment": "...", "severity": "..."}
+        {"issues": [...], "root_cause": "...", "evidence": [...], "sentiment": "...", "severity": "..."}
     """
     chain = create_review_analysis_chain()
-    result = chain.invoke({"review_text": review_text})
+    ctx = context_text if context_text.strip() else "暂无全链路数据，请仅基于评论内容分析。"
+    result = chain.invoke({"review_text": review_text, "context_text": ctx})
     logger.debug("LCEL 分析结果: %s", result)
     return result
 
@@ -261,20 +190,22 @@ def reply_with_lcel(review_text: str, language: str = "中文") -> dict:
     return result
 
 
-def suggest_with_lcel(review_text: str, issues: list[str]) -> dict:
+def suggest_with_lcel(review_text: str, issues: list[str], context_text: str = "") -> dict:
     """
     使用 LCEL 链生成运营建议。
 
     参数:
-        review_text: 原始评论
-        issues:      已识别的问题列表
+        review_text:  原始评论
+        issues:       已识别的问题列表
+        context_text: 业务上下文，可选
 
     返回:
         {"suggestions": [...], "priority": [...], "estimated_impact": "..."}
     """
     issues_str = "\n".join(f"- {issue}" for issue in issues)
+    ctx = context_text if context_text.strip() else "暂无全链路数据。"
     chain = create_suggestion_chain()
-    result = chain.invoke({"review_text": review_text, "issues": issues_str})
+    result = chain.invoke({"review_text": review_text, "issues": issues_str, "context_text": ctx})
     logger.debug("LCEL 建议结果: %s", result)
     return result
 
@@ -297,7 +228,7 @@ def analyze_with_legacy_llmchain(review_text: str) -> dict:
     parser = JsonOutputParser()
 
     # Step 1: 渲染 Prompt
-    formatted = REVIEW_ANALYSIS_TEMPLATE.format(review_text=review_text)
+    formatted = review_analysis_prompt.format(review_text=review_text, context_text="")
 
     # Step 2: 调用 LLM
     response = llm.invoke(formatted)

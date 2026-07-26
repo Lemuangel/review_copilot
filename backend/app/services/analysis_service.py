@@ -17,7 +17,7 @@ import logging
 from typing import Optional
 
 from app.database.database import SessionLocal
-from app.models import AnalysisResult, OperationSuggestion, CustomerReply
+from app.models import AnalysisResult, OperationSuggestion, CustomerReply, Review
 from app.services.langchain_service import (
     analyze_with_lcel,
     suggest_with_lcel,
@@ -36,10 +36,12 @@ def run_full_analysis(
     """
     完整差评分析流程：
 
-    1. AI 分析 → 写入 analysis_result
-    2. AI 建议 → 写入 operation_suggestion
+    1. 获取全链路上下文（任务4新增）
+    2. AI 分析（带上下文）→ 写入 analysis_result
+    3. AI 建议（带上下文）→ 写入 operation_suggestion
 
-    返回: {"review_id": int, "analysis_id": int, "suggestion_id": int, "issues": [...], "suggestions": [...]}
+    返回: {"review_id": int, "analysis_id": int, "suggestion_id": int,
+           "issues": [...], "suggestions": [...], "context_used": bool}
     """
     result = {
         "review_id": review_id,
@@ -47,15 +49,45 @@ def run_full_analysis(
         "suggestion_id": None,
         "issues": [],
         "suggestions": [],
+        "context_used": False,
     }
 
     # 无有效 review_id 时跳过数据库写入（避免 FK 约束错误）
     if review_id <= 0:
         save_to_db = False
 
+    # ---- Step 0: 获取全链路上下文（任务4） ----
+    context_text = ""
+    if review_id > 0:
+        try:
+            from app.services.review_service import get_review_context, format_context
+            ctx = get_review_context(review_id)
+            context_text = format_context(ctx)
+            if context_text:
+                result["context_used"] = True
+        except ValueError:
+            pass  # review 不存在
+        except Exception:
+            pass  # 上下文获取失败不影响主流程
+
+    # ---- Step 0.5: 检索历史相似差评（Chroma RAG） ----
+    try:
+        from app.services.vector_service import search_similar_reviews
+        similar = search_similar_reviews(review_text, k=3)
+        if similar:
+            lines = ["## 历史相似差评（供参考）"]
+            for i, s in enumerate(similar, 1):
+                meta = s.get("metadata", {})
+                label = meta.get("label", "未分类")
+                lines.append(f"{i}. [{label}] {s['content'][:200]}")
+            similar_text = "\n".join(lines)
+            context_text = context_text + "\n\n" + similar_text if context_text else similar_text
+    except Exception:
+        pass  # Chroma 不可用不影响主流程
+
     # ---- Step 1: LangChain LCEL 链分析差评 ----
     try:
-        analysis_data = analyze_with_lcel(review_text)
+        analysis_data = analyze_with_lcel(review_text, context_text)
     except Exception as e:
         logger.error(f"AI分析失败: {e}")
         raise
@@ -63,7 +95,11 @@ def run_full_analysis(
     issues = analysis_data.get("issues", [])
     sentiment = analysis_data.get("sentiment", "negative")
     severity = analysis_data.get("severity", "medium")
+    root_cause = analysis_data.get("root_cause", "")
+    evidence = analysis_data.get("evidence", [])
     result["issues"] = issues
+    result["root_cause"] = root_cause
+    result["evidence"] = evidence
 
     # ---- Step 2: 保存 analysis_result ----
     if save_to_db:
@@ -92,7 +128,7 @@ def run_full_analysis(
     # ---- Step 3: LangChain LCEL 链生成运营建议 ----
     if issues:
         try:
-            suggestion_data = suggest_with_lcel(review_text, issues)
+            suggestion_data = suggest_with_lcel(review_text, issues, context_text)
         except Exception as e:
             logger.warning(f"运营建议生成失败: {e}")
             suggestion_data = {"suggestions": ["请稍后重试"], "priority": [], "estimated_impact": "unknown"}
@@ -123,6 +159,154 @@ def run_full_analysis(
         result["suggestions"] = ["未检测到明确问题，建议人工复核"]
 
     return result
+
+
+def get_statistics() -> dict:
+    """
+    聚合统计分析：差评比例、问题分类分布、严重程度分布、物流状态分布。
+
+    SQL 聚合 review + analysis_result + logistics 三张表。
+    """
+    from sqlalchemy import func
+    from app.models import Review, AnalysisResult, Logistics
+
+    db = SessionLocal()
+    try:
+        # 评论总量
+        total = db.query(func.count(Review.review_id)).scalar() or 0
+        negative = db.query(func.count(Review.review_id)).filter(Review.rating <= 2).scalar() or 0
+        negative_ratio = round(negative / total, 2) if total > 0 else 0.0
+
+        # 问题分类分布（label 列）
+        label_dist = {}
+        if total > 0:
+            rows = db.query(Review.label, func.count(Review.review_id)).filter(
+                Review.label.isnot(None)
+            ).group_by(Review.label).all()
+            label_dist = {label: count for label, count in rows}
+
+        # 严重程度分布
+        severity_dist = {}
+        analyzed = db.query(func.count(AnalysisResult.analysis_id)).scalar() or 0
+        if analyzed > 0:
+            rows = db.query(AnalysisResult.severity, func.count(AnalysisResult.analysis_id)).filter(
+                AnalysisResult.severity.isnot(None)
+            ).group_by(AnalysisResult.severity).all()
+            severity_dist = {sev: count for sev, count in rows}
+
+        # 物流状态分布
+        logistics_dist = {}
+        logistics_total = db.query(func.count(Logistics.logistics_id)).scalar() or 0
+        if logistics_total > 0:
+            rows = db.query(Logistics.shipping_status, func.count(Logistics.logistics_id)).filter(
+                Logistics.shipping_status.isnot(None)
+            ).group_by(Logistics.shipping_status).all()
+            logistics_dist = {status: count for status, count in rows}
+
+        return {
+            "total_reviews": total,
+            "negative_count": negative,
+            "negative_ratio": negative_ratio,
+            "label_distribution": label_dist,
+            "severity_distribution": severity_dist,
+            "logistics_distribution": logistics_dist,
+            "analyzed_count": analyzed,
+        }
+    finally:
+        db.close()
+
+
+def get_frontend_statistics() -> dict:
+    """
+    前端兼容的统计数据，格式对齐 data.js mock。
+    返回: { total, categories: [{name, value}], starDistribution: [{star, count}] }
+    """
+    from sqlalchemy import func
+    from app.models import Review
+
+    db = SessionLocal()
+    try:
+        total = db.query(func.count(Review.review_id)).scalar() or 0
+
+        # 类别分布（label → 中文映射）
+        label_cn = {
+            "Logistics": "物流问题",
+            "ProductQuality": "质量问题",
+            "DescriptionMismatch": "描述不符",
+            "Price": "价格问题",
+            "CustomerService": "客服问题",
+            "Other": "未分类",
+        }
+        label_rows = db.query(Review.label, func.count(Review.review_id)).filter(
+            Review.label.isnot(None)
+        ).group_by(Review.label).all()
+        categories = [
+            {"name": label_cn.get(label, label or "未分类"), "value": count}
+            for label, count in label_rows
+        ]
+
+        # 星级分布
+        star_rows = db.query(Review.rating, func.count(Review.review_id)).filter(
+            Review.rating.isnot(None)
+        ).group_by(Review.rating).all()
+        star_distribution = [
+            {"star": int(star), "count": count}
+            for star, count in star_rows
+        ]
+
+        return {
+            "total": total,
+            "categories": categories,
+            "starDistribution": star_distribution,
+        }
+    finally:
+        db.close()
+
+
+def run_generate(review_id: int, gen_type: str) -> str:
+    """
+    统一 AI 生成：根据 type 调用客服回复或运营建议。
+
+    参数:
+        review_id: 评论ID
+        gen_type:  "reply" | "suggestion"
+    返回: 生成文本
+    """
+    from app.services.review_service import get_review_context, format_context
+
+    # 获取评论内容
+    db = SessionLocal()
+    try:
+        review = db.query(Review).filter(Review.review_id == review_id).first()
+        if review is None:
+            raise ValueError(f"评论不存在: review_id={review_id}")
+        review_text = review.review_text
+    finally:
+        db.close()
+
+    # 获取全链路上下文
+    context_text = ""
+    try:
+        ctx = get_review_context(review_id)
+        context_text = format_context(ctx)
+    except Exception:
+        pass
+
+    if gen_type == "reply":
+        reply_data = reply_with_lcel(review_text, "中文")
+        return reply_data.get("reply", "")
+
+    elif gen_type == "suggestion":
+        analysis_data = analyze_with_lcel(review_text, context_text)
+        issues = analysis_data.get("issues", [])
+        if issues:
+            suggestion_data = suggest_with_lcel(review_text, issues, context_text)
+            suggestions = suggestion_data.get("suggestions", [])
+            return "\n".join(f"{i+1}. {s}" for i, s in enumerate(suggestions))
+        return "未检测到明确问题，建议人工复核"
+
+    else:
+        raise ValueError(f"不支持的生成类型: {gen_type}，仅支持 reply 或 suggestion")
 
 
 def run_customer_reply(

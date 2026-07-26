@@ -3,10 +3,10 @@
 POST /reviews/upload — 上传CSV评论文件 → 保存 review 表
 """
 
-from fastapi import APIRouter, UploadFile, File, HTTPException
+from fastapi import APIRouter, UploadFile, File, HTTPException, Query
 
-from app.schemas import ReviewUploadResponse
-from app.services.review_service import parse_csv, process_reviews
+from app.schemas import ReviewUploadResponse, ReviewContextResponse, ReviewListItem
+from app.services.review_service import parse_csv, process_reviews, get_review_context, get_review_list, get_review_detail
 
 router = APIRouter(prefix="/reviews", tags=["评论管理"])
 
@@ -59,3 +59,62 @@ async def upload_reviews(file: UploadFile = File(..., description="CSV评论文�
         message=f"成功处理 {imported_count}/{len(rows)} 条评论",
         review_ids=review_ids,
     )
+
+
+@router.get("/{review_id}/context", response_model=ReviewContextResponse, summary="查询评论全链路上下文")
+async def get_context(review_id: int):
+    """
+    根据评论ID查询完整业务上下文，包括：
+
+    - review:    评论原文、评分、分类标签
+    - product:   商品名称、类别、价格、ASIN
+    - order:     订单编号、客户国家、金额、支付方式
+    - logistics: 物流承运商、时效、延迟天数、异常原因
+    - warehouse: 仓库名称、区域
+    - inventory: 当前库存、可用库存
+
+    用于 AI 分析时提供全链路决策依据。
+    """
+    try:
+        context = get_review_context(review_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+    return ReviewContextResponse(**context)
+
+
+@router.get("", response_model=dict, summary="评论列表（分页）")
+async def list_reviews(
+    page: int = Query(1, ge=1, description="页码"),
+    size: int = Query(20, ge=1, le=200, description="每页条数"),
+):
+    """
+    分页查询评论列表，返回前端兼容格式。
+
+    响应：{ code: 200, data: [...], total: N }
+    """
+    try:
+        reviews, total = get_review_list(page, size)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+    return {"code": 200, "data": reviews, "total": total}
+
+
+@router.get("/{review_id}", response_model=dict, summary="评论详情")
+async def get_review(review_id: int):
+    """
+    查询单条评论详情，返回前端兼容格式。
+
+    响应：{ code: 200, data: {...} }
+    """
+    try:
+        detail = get_review_detail(review_id)
+    except ValueError as e:
+        raise HTTPException(status_code=404, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"查询失败: {str(e)}")
+
+    return {"code": 200, "data": detail}
