@@ -6,7 +6,7 @@
       <el-col :span="6">
         <el-card shadow="hover">
           <div class="kpi-item">
-            <div class="kpi-label">📋 总差评数</div>
+            <div class="kpi-label">总差评数</div>
             <div class="kpi-value">{{ stats.total }}</div>
           </div>
         </el-card>
@@ -30,7 +30,7 @@
       <el-col :span="6">
         <el-card shadow="hover">
           <div class="kpi-item">
-            <div class="kpi-label">🚨 1星差评</div>
+            <div class="kpi-label">1星差评数</div>
             <div class="kpi-value">{{ stats.oneStarCount }}</div>
           </div>
         </el-card>
@@ -41,13 +41,13 @@
     <el-card shadow="hover" class="analysis-card">
       <template #header>
         <div class="card-header">
-          <span>🔍 单条差评实时 AI 分析</span>
+          <span>单条差评实时 AI 分析</span>
           <el-select v-model="selectedId" placeholder="选择差评" @change="onReviewChange" style="width:200px;">
             <el-option
               v-for="item in reviewOptions"
-              :key="item.id"
-              :label="item.id + ' - ' + item.translatedText.slice(0, 20) + '...'"
-              :value="item.id"
+              :key="item.review_id"
+              :label="item.review_id + ' - ' + (item.review_text ? item.review_text.slice(0, 20) : '') + '...'"
+              :value="item.review_id"
             />
           </el-select>
           <el-button type="primary" size="small" @click="generateAI">生成 AI 回复</el-button>
@@ -57,23 +57,23 @@
       <!-- 差评信息（上半部分） -->
       <div v-if="currentReview" class="review-section">
         <div class="review-meta">
-          <el-rate v-model="currentReview.starRating" disabled />
-          <el-tag :type="getCategoryColor(currentReview.category)">{{ currentReview.category }}</el-tag>
-          <el-tag v-if="currentReview.verified" type="success" size="small">已验证</el-tag>
+          <el-rate v-model="currentReview.rating" disabled />
+          <el-tag :type="getCategoryColor(currentReview.label)">{{ currentReview.label||'未分类' }}</el-tag>
+          <!--<el-tag v-if="currentReview.verified" type="success" size="small">已验证</el-tag>
           <el-tag v-if="currentReview.vineVoice" type="warning" size="small">Vine</el-tag>
-          <span class="country">{{ currentReview.country }}</span>
+          <span class="country">{{ currentReview.country }}</span>-->
         </div>
         <div class="review-text">
           <div class="original">
             <strong>买家原文：</strong>
-            <p>{{ currentReview.commentText }}</p>
+            <p>{{ currentReview.review_text }}</p>
           </div>
           <div class="translated">
-            <strong>AI 翻译：</strong>
-            <p>{{ currentReview.translatedText }}</p>
+            <strong>摘要：</strong>
+            <p>{{ currentReview.summary }}</p>
           </div>
         </div>
-        <div v-if="currentReview.images && currentReview.images.length" class="image-gallery">
+        <!--<div v-if="currentReview.images && currentReview.images.length" class="image-gallery">
           <el-image
             v-for="(img, idx) in currentReview.images"
             :key="idx"
@@ -82,7 +82,7 @@
             class="thumbnail"
             :preview-src-list="currentReview.images"
           />
-        </div>
+        </div>-->
       </div>
       <div v-else class="placeholder">请选择一条差评</div>
 
@@ -144,7 +144,7 @@ import { ref, onMounted, nextTick, computed } from 'vue';
 import * as echarts from 'echarts';
 import 'echarts-wordcloud';
 import { ElMessage } from 'element-plus';
-import { getStatistics, getReviewList, getReviewDetail, generateAIForReview } from '../api/review';
+import { getStatistics, getReviewList, getReviewDetail, generateAIForReview, getWordCloud } from '../api/review';
 
 // ========== 状态 ==========
 const stats = ref({ total: 0, avgStar: 0, topCategory: '--', oneStarCount: 0 });
@@ -180,9 +180,11 @@ const getCategoryColor = (category) => {
 // 加载所有差评列表（用于下拉选择）
 const loadReviewOptions = async () => {
   const res = await getReviewList({ page: 1, size: 100 });
-  reviewOptions.value = res.data || [];
+  console.log('📦 res 完整结构:', res);  // 👈 加这行
+  reviewOptions.value = res || [];
+  console.log('📦 reviewOptions 长度:', reviewOptions.value.length);  // 👈 加这行
   if (reviewOptions.value.length) {
-    selectedId.value = reviewOptions.value[0].id;
+    selectedId.value = reviewOptions.value[0].review_id;
     await loadReviewDetail(selectedId.value);
   }
 };
@@ -191,9 +193,12 @@ const loadReviewOptions = async () => {
 const loadReviewDetail = async (id) => {
   try {
     const res = await getReviewDetail(id);
-    currentReview.value = res.data;
+    console.log('📦 详情返回:', res);
+    currentReview.value = res;
     aiReply.value = ''; // 切换时清空AI回复
+    aiSuggestion.value = '';
   } catch (error) {
+    console.error('❌ 加载详情失败，错误详情:', error);
     ElMessage.error('加载差评失败');
   }
 };
@@ -209,8 +214,8 @@ const generateAI = async () => {
   loading.value = true;
   aiReply.value = '';
   try {
-    const res = await generateAIForReview(currentReview.value.id, 'reply');
-    const fullText = res.data;
+    const res = await generateAIForReview(currentReview.value.review_id, 'reply');
+    const fullText = res;
     // 打字机效果
     let index = 0;
     const interval = setInterval(() => {
@@ -233,8 +238,8 @@ const generateSuggestion = async () => {
   loadingSuggestion.value = true;
   aiSuggestion.value = '';
   try {
-    const res = await generateAIForReview(currentReview.value.id, 'suggestion');
-    const fullText = res.data;
+    const res = await generateAIForReview(currentReview.value.review_id, 'suggestion');
+    const fullText = res;
     let index = 0;
     const interval = setInterval(() => {
       if (index < fullText.length) {
@@ -281,8 +286,7 @@ const formattedReply = computed(() => {
 
 // ========== 加载统计数据并绘制图表 ==========
 const loadStatsAndCharts = async () => {
-  const res = await getStatistics();
-  const data = res.data;
+  const data = await getStatistics();
   const total = data.total || 0;
   const starDist = data.starDistribution || [];
   const categories = data.categories || [];
@@ -318,15 +322,19 @@ const loadStatsAndCharts = async () => {
   }
 
 
+  // 获取词云数据（替换硬编码）
+  const wordcloudRes = await getWordCloud();
+  let wordCloudData = wordcloudRes || [];
+
+// 如果没数据，显示占位
+  if (wordCloudData.length === 0) {
+    wordCloudData = [{ name: '暂无数据', value: 1 }];
+  }
+
+// 渲染词云（使用上面的 wordCloudData）
   if (wordcloudRef.value) {
     if (wordcloudChart) wordcloudChart.dispose();
     wordcloudChart = echarts.init(wordcloudRef.value);
-    const wordCloudData = [
-      { name: '物流', value: 28 }, { name: '慢', value: 25 }, { name: '丢包', value: 18 },
-      { name: '尺码', value: 22 }, { name: '太小', value: 30 }, { name: '色差', value: 20 },
-      { name: '质量', value: 35 }, { name: '客服', value: 15 }, { name: '退款', value: 12 },
-      { name: '包装', value: 14 }, { name: '描述不符', value: 19 }, { name: '气味', value: 8 }
-    ];
     wordcloudChart.setOption({
       series: [{
         type: 'wordCloud',

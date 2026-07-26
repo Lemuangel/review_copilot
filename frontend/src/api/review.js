@@ -65,7 +65,7 @@ export const getStatistics = async () => {
       }
     };
   }
-  const res = await request.get('/statistics');
+  const res = await request.get('/reviews/statistics');
   return res;
 };
 
@@ -88,7 +88,7 @@ export const generateAIForReview = async (reviewId, type) => {
     return { code: 200, data: text };
   }
   // 真实模式：调用后端 AI 生成接口（具体路径以后端实际为准）
-  const res = await request.post('/generate', { reviewId, type });
+  const res = await request.post('/reviews/generate', { review_id: reviewId, type });
   return res;
 };
 
@@ -105,5 +105,20 @@ export const uploadCSV = async (file) => {
       'Content-Type': 'multipart/form-data',
     },
   });
+  return res;
+};
+
+export const getWordCloud = async () => {
+  if (USE_MOCK) {
+    await delay(200);
+    return {
+      code: 200,
+      data: [
+        { name: '物流', value: 28 }, { name: '慢', value: 25 },
+        { name: '质量', value: 35 }, { name: '客服', value: 15 }
+      ]
+    };
+  }
+  const res = await request.get('/reviews/wordcloud');
   return res;
 };
