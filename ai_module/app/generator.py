@@ -34,9 +34,9 @@ if TYPE_CHECKING:
     from langchain_core.output_parsers import JsonOutputParser
     from langchain_core.runnables import RunnableSerializable
 
-print("🔍 环境变量检查:")
-print("OPENAI_API_KEY:", os.getenv("OPENAI_API_KEY", "未设置"))
-print("OPENAI_BASE_URL:", os.getenv("OPENAI_BASE_URL", "未设置"))
+print("[AI Module] Env check:")
+print("OPENAI_API_KEY:", os.getenv("OPENAI_API_KEY", "Not set"))
+print("OPENAI_BASE_URL:", os.getenv("OPENAI_BASE_URL", "Not set"))
 # ============================================================
 # 1. LLM 初始化
 # ============================================================

@@ -15,8 +15,17 @@ from ..services.prompt_service import customer_reply_prompt, operation_suggestio
 from pydantic import BaseModel
 import sys
 from pathlib import Path
-import jieba
+import spacy
 from collections import Counter
+
+# spaCy 模型懒加载（避免启动时加载耗时）
+_nlp = None
+
+def _get_nlp():
+    global _nlp
+    if _nlp is None:
+        _nlp = spacy.load("en_core_web_sm")
+    return _nlp
 
 router = APIRouter(prefix="/reviews", tags=["评论管理"])
 
@@ -111,68 +120,46 @@ async def get_reviews(
 
 @router.get("/wordcloud")
 async def get_wordcloud(db: Session = Depends(get_db)):
-    """生成词云数据：从所有差评中提取高频词"""
-    # 1. 获取所有评论
+    """生成词云数据：从所有差评中提取高频词（spaCy 英文分词）"""
     reviews = db.query(Review).all()
     if not reviews:
         return {"code": 200, "data": []}
 
-    # 2. 拼接所有评论文本
+    # 1. 拼接所有评论文本
     all_text = " ".join([r.review_text for r in reviews if r.review_text])
 
-    # 3. 中文分词（同时处理英文和中文）
+    # 2. spaCy 英文分词 + 词形还原 + 词性过滤
+    nlp = _get_nlp()
     words = []
-    # 英文分词（按空格和标点分割）
-    import re
-    english_words = re.findall(r'\b[a-zA-Z]{3,}\b', all_text)
-    words.extend([w.lower() for w in english_words])
 
-    # 中文分词（如果文本包含中文）
-    chinese_words = jieba.lcut(all_text)
-    words.extend([w for w in chinese_words if len(w) > 1])
-
-    # 4. 停用词过滤（去掉无意义的词）
-    stopwords = {
-        # 英文停用词（扩充）
-        'a', 'an', 'the', 'and', 'or', 'but', 'for', 'nor', 'on', 'at', 'to', 'by',
-        'in', 'of', 'off', 'out', 'over', 'under', 'with', 'without', 'after',
-        'before', 'during', 'through', 'between', 'among', 'upon', 'about',
-        'above', 'across', 'along', 'around', 'at', 'behind', 'below',
-        'beneath', 'beside', 'beyond', 'down', 'from', 'into', 'near',
-        'off', 'onto', 'toward', 'up', 'upon', 'within', 'without',
-        'i', 'you', 'he', 'she', 'it', 'we', 'they', 'me', 'us', 'them',
-        'my', 'your', 'his', 'her', 'our', 'their', 'its', 'mine', 'yours',
-        'hers', 'ours', 'theirs', 'am', 'is', 'are', 'was', 'were', 'be',
-        'been', 'being', 'have', 'has', 'had', 'do', 'does', 'did', 'will',
-        'would', 'could', 'should', 'may', 'might', 'must', 'shall',
-        'this', 'that', 'these', 'those', 'then', 'now', 'than', 'so',
-        'too', 'very', 'just', 'only', 'also', 'again', 'ever', 'never',
-        'once', 'always', 'often', 'sometimes', 'usually', 'already',
-        'yet', 'still', 'almost', 'quite', 'rather', 'really', 'actually',
-        'basically', 'certainly', 'definitely', 'obviously', 'probably',
-        'simply', 'suddenly', 'eventually', 'finally', 'soon', 'later',
-        'earlier', 'else', 'something', 'anything', 'nothing', 'everything',
-        'someone', 'anyone', 'no one', 'everyone', 'everybody', 'nobody',
-        'somebody', 'anybody', 'everything', 'nothing', 'something',
-        'for', 'with', 'without', 'like', 'as', 'than', 'that', 'which',
-        'who', 'whom', 'whose', 'what', 'where', 'when', 'why', 'how','not','all',
-        'one','two'
-        # 常见缩写
-        "don't", "doesn't", "didn't", "isn't", "aren't", "wasn't", "weren't",
-        "haven't", "hasn't", "hadn't", "won't", "wouldn't", "couldn't",
-        "shouldn't", "mightn't", "mustn't", "can't", "cannot", "i'll", "you'll",
-        "he'll", "she'll", "it'll", "we'll", "they'll", "i'd", "you'd", "he'd",
-        "she'd", "it'd", "we'd", "they'd", "i'm", "you're", "he's", "she's",
-        "it's", "we're", "they're",
-        # 中文停用词（保留）
-        '的', '了', '是', '在', '我', '有', '和', '就', '不', '人', '都', '一', '个',
-        '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好',
-        '能', '多', '更', '对', '可', '还', '之', '与', '或', '等', '后', '前', '等'
+    # 领域停用词（Amazon 评论中无意义的常见词）
+    domain_stopwords = {
+        "product", "item", "buy", "bought", "purchase", "order", "amazon",
+        "review", "star", "stars", "one", "two", "get", "got", "would",
+        "could", "even", "much", "really", "use", "used", "using",
+        "time", "day", "week", "month", "thing",
+        "think", "try", "look", "give", "say", "little",
+        "come", "turn", "know", "year", "go", "make", "take",
+        "good", "unit", "need", "device",
     }
-    filtered_words = [w for w in words if w not in stopwords and len(w) > 1]
 
-    # 5. 统计词频，取前 30 个
-    word_counts = Counter(filtered_words).most_common(30)
+    for doc in nlp.pipe(all_text.split(". "), batch_size=50):
+        for token in doc:
+            # 只保留名词、形容词、动词、专有名词
+            if token.pos_ not in ("NOUN", "ADJ", "VERB", "PROPN"):
+                continue
+            # 过滤停用词、标点、数字、短词
+            if token.is_stop or token.is_punct or token.is_digit:
+                continue
+            lemma = token.lemma_.lower().strip()
+            if len(lemma) < 3:
+                continue
+            if lemma in domain_stopwords:
+                continue
+            words.append(lemma)
+
+    # 3. 统计词频，取前 30 个
+    word_counts = Counter(words).most_common(30)
     result = [{"name": w, "value": c} for w, c in word_counts]
 
     return {"code": 200, "data": result}
