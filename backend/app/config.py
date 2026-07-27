@@ -6,7 +6,13 @@
 import os
 from dotenv import load_dotenv
 
-load_dotenv()
+# 尝试多种编码加载 .env（Windows 中文环境下可能是 GBK 编码）
+for encoding in ["utf-8", "utf-8-sig", "gbk", "gb2312", "latin-1"]:
+    try:
+        load_dotenv(encoding=encoding)
+        break
+    except (UnicodeDecodeError, FileNotFoundError):
+        continue
 
 
 def _build_database_url() -> str:

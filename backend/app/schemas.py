@@ -190,5 +190,9 @@ class ReviewListItem(BaseModel):
 
 class GenerateRequest(BaseModel):
     """AI 生成请求"""
-    reviewId: str = Field(..., description="评论ID")
+    review_id: str = Field(..., alias="reviewId", description="评论ID")
+    reviewId: Optional[str] = Field(None, description="评论ID（兼容驼峰）")
     type: str = Field(..., description="生成类型: reply | suggestion")
+
+    class Config:
+        populate_by_name = True
