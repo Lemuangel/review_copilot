@@ -2,7 +2,7 @@ import mockReviews from '../data.js';
 import request from '../request.js';
 
 // ========== 模式开关 ==========
-const USE_MOCK = false;  // 👈 开发时用 true（读 data.js），联调时改为 false（调后端接口）
+const USE_MOCK = false;
 
 // ========== 模拟延迟（仅模拟模式使用） ==========
 const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));

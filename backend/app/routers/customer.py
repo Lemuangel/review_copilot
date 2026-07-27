@@ -4,7 +4,7 @@ POST /customer/reply — 生成客服回复 → 保存 customer_reply 表
 
 调用链：
     customer.py → analysis_service.run_customer_reply()
-        ├── langchain_service.reply_with_lcel() → LCEL → reply
+        ├── ai_service.generate_reply()   → LCEL → reply
         └── 保存 customer_reply 表
 """
 
