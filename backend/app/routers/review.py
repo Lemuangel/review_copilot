@@ -117,7 +117,7 @@ async def get_wordcloud(db: Session = Depends(get_db)):
     """生成词云数据：从所有差评中提取高频词"""
     reviews = db.query(Review).all()
     if not reviews:
-        return {"data": []}
+        return {"code": 200, "data": []}
     all_text = " ".join([r.review_text for r in reviews if r.review_text])
     words = []
     english_words = re.findall(r'\b[a-zA-Z]{3,}\b', all_text)
@@ -141,7 +141,7 @@ async def get_wordcloud(db: Session = Depends(get_db)):
     filtered = [w for w in words if w.lower() not in stopwords]
     counter = Counter(filtered)
     result = [{"name": word, "value": count} for word, count in counter.most_common(100)]
-    return {"data": result}
+    return {"code": 200, "data": result}
 
 
 @router.get("/{review_id}", response_model=dict, summary="评论详情")
