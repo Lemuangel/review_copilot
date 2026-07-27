@@ -105,7 +105,7 @@ def test_vector_store():
         return
 
     client = chromadb.PersistentClient(path=config.CHROMA_DIR)
-    names = client.list_collections()
+    names = [col.name for col in client.list_collections()]
 
     if not names:
         print("向量库为空")
