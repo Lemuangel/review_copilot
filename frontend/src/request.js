@@ -4,7 +4,7 @@ import axios from 'axios';
 // 1. 创建“快递员”实例
 const request = axios.create({
   baseURL: 'http://localhost:8000', // 后端的地址
-  timeout: 30000, // 10秒超时
+  timeout: 120000, // 2分钟超时（Agent需要多次LLM调用）
 });
 
 // 2. “安检门”：发请求前自动加 Token

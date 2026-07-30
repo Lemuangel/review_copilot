@@ -26,10 +26,16 @@ if TYPE_CHECKING:
 # 1. Embedding 模型初始化
 # ============================================================
 def init_embeddings() -> "HuggingFaceEmbeddings":
-    """初始化 Embedding 模型（Lazy: 首次调用时才加载模型）"""
+    """初始化 Embedding 模型（优先本地ModelScope缓存）"""
     from langchain_huggingface import HuggingFaceEmbeddings
+    import os
+    # 优先用ModelScope本地缓存，避免HuggingFace连不上
+    local_path = os.path.expanduser(
+        '~/.cache/huggingface/hub/models/BAAI--bge-m3/snapshots/master'
+    )
+    model = local_path if os.path.exists(local_path) else EMBEDDING_MODEL
     return HuggingFaceEmbeddings(
-        model_name=EMBEDDING_MODEL,
+        model_name=model,
         model_kwargs={"device": "cpu"},
         encode_kwargs={"normalize_embeddings": True}
     )

@@ -14,16 +14,16 @@ from __future__ import annotations
 import json
 from typing import Dict, Optional, TYPE_CHECKING
 
-from app.config import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
-from app.generator import (
+import os
+from .generator import (
     analyze_review,
     generate_reply,
     get_logistics_status,
     translate_to_english,
     LOGISTICS_STATUSES,
 )
-from app.vector_store import get_vector_store
-from app.prompts import format_rag_context
+from .vector_store import get_vector_store
+from .prompts import format_rag_context
 
 
 # ============================================================
@@ -33,9 +33,9 @@ def init_agent_llm(temperature: float = 0.3):
     """初始化 Agent 使用的 LLM"""
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(
-        model=DEEPSEEK_MODEL,
-        openai_api_key=DEEPSEEK_API_KEY,
-        base_url=DEEPSEEK_BASE_URL,
+        model=os.getenv("OPENAI_MODEL_NAME", "deepseek-v4-pro"),
+        openai_api_key=os.getenv("OPENAI_API_KEY") or os.getenv("MODEL_API_KEY"),
+        base_url=os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com"),
         temperature=temperature,
     )
 
@@ -153,7 +153,7 @@ def create_review_agent():
 对于非物流类差评，跳过物流查询步骤。
 请用中文回复用户，但生成的回复文案应使用买家语言。"""
 
-    return create_agent(llm=llm, tools=tools, system_prompt=system_prompt)
+    return create_agent(model=llm, tools=tools, system_prompt=system_prompt)
 
 
 # ============================================================

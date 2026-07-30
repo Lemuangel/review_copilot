@@ -193,6 +193,25 @@ def process_reviews(rows: list[dict[str, Any]], source_filename: str) -> tuple[i
                 db.flush()
                 review_ids.append(review.review_id)
                 count += 1
+
+                # 同步到ChromaDB向量库（失败不影响主流程）
+                try:
+                    from langchain_core.documents import Document
+                    from ai_module.app.vector_store import get_vector_store
+                    vs = get_vector_store()
+                    if vs.get_stats()["status"] == "ready":
+                        vs.add_documents([Document(
+                            page_content=review_text,
+                            metadata={
+                                "review_id": review.review_id,
+                                "asin": asin,
+                                "overall": review.rating or 0,
+                                "label": review.label or "",
+                            }
+                        )])
+                except Exception:
+                    pass  # 向量库未初始化时静默跳过
+
                 logger.debug(f"创建评论: {asin} by {reviewer_id}")
 
         db.commit()

@@ -160,7 +160,27 @@ async def get_wordcloud(db: Session = Depends(get_db)):
 
     # 3. 统计词频，取前 30 个
     word_counts = Counter(words).most_common(30)
-    result = [{"name": w, "value": c} for w, c in word_counts]
+
+    # 英译中对照表
+    en2zh = {
+        "work": "运行/不工作", "screen": "屏幕", "return": "退货", "sound": "声音",
+        "power": "电源", "quality": "质量", "fit": "尺寸/适配", "bad": "差/坏",
+        "laptop": "笔记本", "cable": "线缆", "plug": "插头", "problem": "问题",
+        "antenna": "天线", "break": "断裂/损坏", "money": "钱/不值",
+        "support": "支持/支架", "charge": "充电", "protector": "保护套",
+        "adapter": "适配器", "pay": "付款", "card": "卡", "light": "灯/光线",
+        "volume": "音量", "plastic": "塑料", "pair": "配对", "touch": "触摸",
+        "head": "耳机/头部", "send": "发货", "receive": "收到", "camera": "摄像头",
+        "battery": "电池", "phone": "手机", "case": "手机壳", "button": "按钮",
+        "speaker": "扬声器", "wire": "线", "connection": "连接", "bluetooth": "蓝牙",
+        "mouse": "鼠标", "keyboard": "键盘", "fan": "风扇", "noise": "噪音",
+        "temperature": "温度", "speed": "速度", "size": "尺寸", "color": "颜色",
+        "material": "材质", "design": "设计", "price": "价格", "delivery": "配送",
+        "package": "包装", "box": "盒子", "refund": "退款", "replace": "换货",
+        "warranty": "保修", "service": "客服", "brand": "品牌", "market": "市场",
+        "seller": "卖家", "shipping": "物流", "delay": "延迟", "damage": "损坏",
+    }
+    result = [{"name": en2zh.get(w, w), "value": c} for w, c in word_counts]
 
     return {"code": 200, "data": result}
 
@@ -221,8 +241,8 @@ class GenerateRequest(BaseModel):
 AI_MODULE_PATH = Path(__file__).parent.parent.parent.parent
 sys.path.insert(0, str(AI_MODULE_PATH))
 
-# 从 ai_module 导入生成函数（假设你在 generator.py 中定义了这些函数）
-from ai_module.app.generator import generate_reply, analyze_review
+# 从 ai_module 导入 Agent（自动调度：分析→检索→回复）
+from ai_module.app.agent import get_agent
 
 @router.post("/generate")
 async def generate_ai_response(request: GenerateRequest, db: Session = Depends(get_db)):
@@ -231,7 +251,6 @@ async def generate_ai_response(request: GenerateRequest, db: Session = Depends(g
         raise HTTPException(status_code=404, detail="评论不存在")
 
     try:
-        # 构建 review_data 字典（符合 analyze_review 的输入要求）
         review_data = {
             "asin": review.asin or "unknown",
             "reviewText": review.review_text,
@@ -239,36 +258,52 @@ async def generate_ai_response(request: GenerateRequest, db: Session = Depends(g
             "summary": review.summary or "",
             "style": {},
             "category": review.label or "未分类",
-            "country": "US",  # 如果有 country 字段可从数据库获取
+            "country": "US",
         }
 
-        # 调用 analyze_review 获取完整分析结果（包含 analysis 和 similar_cases 等）
-        result = analyze_review(review_data, use_rag=False)
-        analysis = result.get("analysis", {})
+        agent = get_agent()
 
         if request.type == 'reply':
-            # 调用 generate_reply 生成客服回复
-            # generate_reply 需要 analysis_result（字典）、review_text、target_language
-            reply_dict = generate_reply(
-                analysis_result=analysis,
-                review_text=review.review_text,
-                target_language="en"  # 可根据需要调整
+            prompt = (
+                f"【注意】RAG向量库暂不可用，请跳过历史案例检索。物流与差评内容无关时也跳过。\n"
+                f"【任务】仅生成一段可直接发给顾客的英文客服回复文案，不要分析报告，不要表格，不要建议。\n"
+                f"【差评数据】{json.dumps(review_data, ensure_ascii=False)}\n"
+                f"【差评原文】{review.review_text}\n"
+                f"【输出要求】只输出英文回复正文，100-200词，包含道歉+补偿方案+联系方式。不要其他内容。"
             )
-            # reply_dict 包含 subject, body, tone 等字段
-            content = reply_dict.get("body", "回复生成失败")
-        else:  # suggestion
-            # 从分析结果中提取建议（例如 root_cause）
-            root_cause = analysis.get("root_cause", "未识别到具体问题")
-            tags = analysis.get("tags", [])
-            # 可以组合生成更丰富的建议
-            content = f"【运营建议】基于差评分析，建议重点关注：{root_cause}。相关标签：{', '.join(tags)}"
+        elif request.type == 'suggestion':
+            prompt = (
+                f"【注意】RAG跳过，物流无关时跳过。只输出运营建议，绝对不要客服回复文案。\n"
+                f"【差评数据】{json.dumps(review_data, ensure_ascii=False)}\n"
+                f"【差评原文】{review.review_text}\n"
+                f"【输出要求】2-3句分析摘要 + 3-5条改进措施(P0/P1/P2)。纯文本，不要表格，不要客服回复，不要英文内容。"
+            )
+        else:  # full — 完整诊断
+            prompt = (
+                f"请对以下差评做完整诊断。\n"
+                f"【差评数据】{json.dumps(review_data, ensure_ascii=False)}\n"
+                f"【差评原文】{review.review_text}\n"
+                f"【输出要求】用简洁格式（不用Markdown表格，用【】标注段落标题）：\n"
+                f"【基本信息】ASIN/站点/星级/原文\n"
+                f"【8维评分】每维度一行：维度名 分数/5 证据\n"
+                f"【根因分析】2-3句话\n"
+                f"【历史相似案例】RAG检索到的相似差评及处理策略（如有）\n"
+                f"【物流状态】一句话\n"
+                f"【英文客服回复】正文100-200词\n"
+                f"【运营建议】3-5条 P0/P1/P2"
+            )
+
+        result = agent.invoke({"messages": [{"role": "user", "content": prompt}]})
+        messages = result.get("messages", [])
+        ai_msgs = [m for m in messages if hasattr(m, "content") and type(m).__name__ == "AIMessage"]
+        content = ai_msgs[-1].content if ai_msgs else "Agent 未返回结果"
 
         return {"code": 200, "data": content}
 
     except Exception as e:
         print(f"AI 模块调用失败: {e}")
         import traceback
-        traceback.print_exc()  # 打印完整堆栈，方便调试
+        traceback.print_exc()
         fallback = "【AI生成失败】请检查 ai_module 配置。"
         return {"code": 200, "data": fallback}
 

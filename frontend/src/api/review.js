@@ -92,6 +92,12 @@ export const generateAIForReview = async (reviewId, type) => {
   return res;
 };
 
+// 5. 完整AI深度诊断
+export const generateFullAnalysis = async (reviewId) => {
+  const res = await request.post('/reviews/generate', { review_id: reviewId, type: 'full' });
+  return res;
+};
+
 export const uploadCSV = async (file) => {
   if (USE_MOCK) {
     throw new Error('当前为模拟模式（USE_MOCK=true），请切换为 false 后再上传真实数据');

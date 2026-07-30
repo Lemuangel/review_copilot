@@ -37,6 +37,20 @@
       </el-col>
     </el-row>
 
+    <!-- ========== 数据导入工具栏 ========== -->
+    <div style="margin-bottom:16px; text-align:right;">
+      <el-upload
+        :show-file-list="false"
+        :before-upload="handleUpload"
+        accept=".csv"
+        action="#"
+      >
+        <el-button type="default" size="small" :loading="uploading">
+          <el-icon><Upload /></el-icon> 导入差评CSV
+        </el-button>
+      </el-upload>
+    </div>
+
     <!-- ========== 2. 单条差评分析区（差评 + AI回复 上下结构） ========== -->
     <el-card shadow="hover" class="analysis-card">
       <template #header>
@@ -50,7 +64,9 @@
               :value="item.review_id"
             />
           </el-select>
-          <el-button type="primary" size="small" @click="generateAI">生成 AI 回复</el-button>
+          <el-button type="success" size="small" @click="fullDiagnosis" :loading="loadingFull">
+            {{ loadingFull ? '诊断中...' : '深度诊断' }}
+          </el-button>
         </div>
       </template>
 
@@ -58,7 +74,7 @@
       <div v-if="currentReview" class="review-section">
         <div class="review-meta">
           <el-rate v-model="currentReview.rating" disabled />
-          <el-tag :type="getCategoryColor(currentReview.label)">{{ currentReview.label||'未分类' }}</el-tag>
+          <el-tag :type="getCategoryColor(currentReview.label)">{{ getCategoryLabel(currentReview.label) }}</el-tag>
           <!--<el-tag v-if="currentReview.verified" type="success" size="small">已验证</el-tag>
           <el-tag v-if="currentReview.vineVoice" type="warning" size="small">Vine</el-tag>
           <span class="country">{{ currentReview.country }}</span>-->
@@ -67,10 +83,6 @@
           <div class="original">
             <strong>买家原文：</strong>
             <p>{{ currentReview.review_text }}</p>
-          </div>
-          <div class="translated">
-            <strong>摘要：</strong>
-            <p>{{ currentReview.summary }}</p>
           </div>
         </div>
         <!--<div v-if="currentReview.images && currentReview.images.length" class="image-gallery">
@@ -97,7 +109,7 @@
           </el-button>
         </div>
         <div v-if="aiReply" class="ai-content" v-html="formattedReply"></div>
-        <div v-else class="ai-placeholder">点击“生成回复”，AI 将自动生成多语言客服话术，一键复制即可使用。</div>
+        <div v-else class="ai-placeholder">点击"生成回复"，AI 将自动生成英文客服回复文案，一键复制即可使用。</div>
         <div v-if="aiReply" style="margin-top: 10px;">
           <el-button type="success" size="small" @click="copyReply">
             <el-icon><CopyDocument /></el-icon> 复制回复
@@ -114,7 +126,7 @@
           </el-button>
         </div>
         <div v-if="aiSuggestion" class="ai-content" v-html="formattedSuggestion"></div>
-        <div v-else class="ai-placeholder">点击“生成建议”，AI 将分析差评根因，给出供应链、客服、运营改进措施。</div>
+        <div v-else class="ai-placeholder">点击"生成建议"，AI 将自动分析差评根因并给出改进方案，一键复制即可使用。</div>
         <div v-if="aiSuggestion" style="margin-top: 10px;">
           <el-button type="warning" size="small" @click="copySuggestion">
             <el-icon><CopyDocument /></el-icon> 复制建议
@@ -136,6 +148,12 @@
         </el-card>
       </el-col>
     </el-row>
+
+    <!-- 深度诊断弹窗 -->
+    <el-dialog v-model="fullDialogVisible" title="深度AI诊断报告" width="80%" top="5vh">
+      <div v-if="fullReport" class="full-report" v-html="fullReport"></div>
+      <div v-else style="text-align:center;padding:40px;color:#999;">正在生成完整诊断报告，请稍候...</div>
+    </el-dialog>
   </div>
 </template>
 
@@ -144,7 +162,7 @@ import { ref, onMounted, nextTick, computed } from 'vue';
 import * as echarts from 'echarts';
 import 'echarts-wordcloud';
 import { ElMessage } from 'element-plus';
-import { getStatistics, getReviewList, getReviewDetail, generateAIForReview, getWordCloud } from '../api/review';
+import { getStatistics, getReviewList, getReviewDetail, generateAIForReview, getWordCloud, generateFullAnalysis, uploadCSV } from '../api/review';
 
 // ========== 状态 ==========
 const stats = ref({ total: 0, avgStar: 0, topCategory: '--', oneStarCount: 0 });
@@ -155,6 +173,10 @@ const aiReply = ref('');
 const loading = ref(false);
 const aiSuggestion = ref('');
 const loadingSuggestion = ref(false);
+const loadingFull = ref(false);
+const fullDialogVisible = ref(false);
+const fullReport = ref('');
+const uploading = ref(false);
 
 const pieChartRef = ref(null);
 const wordcloudRef = ref(null);
@@ -175,6 +197,20 @@ const getCategoryColor = (category) => {
     '综合（疑似恶意）': 'danger'
   };
   return map[category] || '';
+};
+
+// 英文标签 → 中文
+const getCategoryLabel = (label) => {
+  const map = {
+    'Logistics': '物流问题',
+    'ProductQuality': '质量问题',
+    'DescriptionMismatch': '描述不符',
+    'Price': '价格问题',
+    'CustomerService': '客服问题',
+    'Packaging': '包装问题',
+    'Other': '其他',
+  };
+  return map[label] || label || '未分类';
 };
 
 // 加载所有差评列表（用于下拉选择）
@@ -228,7 +264,8 @@ const generateAI = async () => {
       }
     }, 25);
   } catch (error) {
-    ElMessage.error('生成失败');
+    console.error('AI生成失败详情:', error);
+    ElMessage.error('生成失败: ' + (error.message || error));
     loading.value = false;
   }
 };
@@ -254,6 +291,38 @@ const generateSuggestion = async () => {
     ElMessage.error('生成建议失败');
     loadingSuggestion.value = false;
   }
+};
+
+// 深度诊断
+const fullDiagnosis = async () => {
+  if (!currentReview.value) return;
+  loadingFull.value = true;
+  fullDialogVisible.value = true;
+  fullReport.value = '';
+  try {
+    const res = await generateFullAnalysis(currentReview.value.review_id);
+    fullReport.value = res.replace(/\n/g, '<br>');
+  } catch (error) {
+    fullReport.value = '诊断失败: ' + (error.message || error);
+    ElMessage.error('深度诊断失败');
+  }
+  loadingFull.value = false;
+};
+
+// CSV上传
+const handleUpload = async (file) => {
+  uploading.value = true;
+  try {
+    await uploadCSV(file);
+    ElMessage.success('导入成功');
+    // 刷新列表和统计
+    await loadReviewOptions();
+    await loadStats();
+  } catch (e) {
+    ElMessage.error('导入失败: ' + (e.message || e));
+  }
+  uploading.value = false;
+  return false; // 阻止el-upload默认上传行为
 };
 
 // 格式化运营建议（换行转 <br>）
@@ -487,5 +556,10 @@ onMounted(async () => {
   font-style: italic;
   min-height: 40px;
   line-height: 40px;
+}
+.full-report {
+  max-height: 70vh;
+  overflow-y: auto;
+  line-height: 1.8;
 }
 </style>
