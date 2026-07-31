@@ -1,24 +1,25 @@
-# 环境变量（包含密码、密钥）
-.env
-
 # Python
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
+
+# Virtual Environment
 .venv/
 venv/
 
-# Node
-node_modules/
-dist/
+# Environment (contains API keys)
+backend/.env
+
+# Database
+*.db
 
 # IDE
-.vscode/
 .idea/
+.vscode/
 
-# 数据文件（大文件不入库）
-data/raw/*.json
-*.log
+# Claude Code
+.claude/
 
-# 系统文件
+# OS
 .DS_Store
 Thumbs.db
